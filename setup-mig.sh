@@ -108,8 +108,55 @@ verify_mig_config() {
     nvidia-smi -i $gpu_id
 }
 
-# Main execution
-main() {
+# Function to destroy all MIG instances
+destroy_mig_instances() {
+    local gpu_id=$1
+    log_info "Destroying all MIG instances on GPU $gpu_id..."
+
+    # Destroy all compute instances and GPU instances
+    nvidia-smi mig -i $gpu_id -dci
+    nvidia-smi mig -i $gpu_id -dgi
+
+    if [[ $? -eq 0 ]]; then
+        log_info "Successfully destroyed MIG instances on GPU $gpu_id"
+    else
+        log_warn "Failed to destroy MIG instances on GPU $gpu_id (may not exist)"
+    fi
+}
+
+# Function to disable MIG mode on a GPU
+disable_mig_mode() {
+    local gpu_id=$1
+    log_info "Disabling MIG mode on GPU $gpu_id..."
+
+    # Check current MIG mode
+    current_mode=$(nvidia-smi -i $gpu_id --query-gpu=mig.mode.current --format=csv,noheader,nounits)
+
+    if [[ "$current_mode" == "Disabled" ]]; then
+        log_info "MIG mode already disabled on GPU $gpu_id"
+        return 0
+    fi
+
+    # First destroy all MIG instances
+    destroy_mig_instances $gpu_id
+
+    # Disable MIG mode
+    nvidia-smi -i $gpu_id -mig 0
+
+    # Verify the mode change
+    sleep 2
+    new_mode=$(nvidia-smi -i $gpu_id --query-gpu=mig.mode.current --format=csv,noheader,nounits)
+
+    if [[ "$new_mode" == "Disabled" ]]; then
+        log_info "MIG mode successfully disabled on GPU $gpu_id"
+    else
+        log_error "Failed to disable MIG mode on GPU $gpu_id"
+        return 1
+    fi
+}
+
+# Main execution for enabling MIG
+enable_mig() {
     log_info "Starting H100 MIG setup..."
 
     # Enable MIG mode on both GPUs
@@ -142,6 +189,33 @@ main() {
     log_info "Use CUDA_VISIBLE_DEVICES=<MIG-UUID> to target specific MIG devices"
 }
 
+# Main execution for disabling MIG
+disable_mig() {
+    log_info "Starting H100 MIG teardown..."
+
+    # Disable MIG mode on both GPUs
+    for gpu_id in 0 1; do
+        disable_mig_mode $gpu_id
+    done
+
+    log_info "MIG teardown complete! Final configuration:"
+
+    # Show final status
+    nvidia-smi
+
+    log_info "Teardown completed successfully!"
+    log_info "GPUs are now in regular (non-MIG) mode"
+}
+
+# Usage information
+usage() {
+    echo "Usage: $0 {enable|disable}"
+    echo ""
+    echo "  enable  - Enable MIG mode and create 2x 40GB instances per GPU"
+    echo "  disable - Disable MIG mode and return to regular GPU mode"
+    exit 1
+}
+
 # Cleanup function for script interruption
 cleanup() {
     log_warn "Script interrupted. MIG configuration may be incomplete."
@@ -150,8 +224,22 @@ cleanup() {
 
 trap cleanup SIGINT SIGTERM
 
-# Run main function
-main
+# Parse command line arguments
+if [[ $# -eq 0 ]]; then
+    usage
+fi
 
-log_info "Script execution finished."%
+case "$1" in
+    enable)
+        enable_mig
+        ;;
+    disable)
+        disable_mig
+        ;;
+    *)
+        usage
+        ;;
+esac
+
+log_info "Script execution finished."
 

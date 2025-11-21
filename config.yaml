@@ -53,6 +53,12 @@ mig-configs:
       mig-devices:
         "3g.40gb": 2
 
+  h100-ID1-2x-40gb:
+    - devices: [1]
+      mig-enabled: true
+      mig-devices:
+        "3g.40gb": 2
+
   custom-config:
     - devices: [0,1,2,3]
       mig-enabled: false
